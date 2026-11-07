@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resi Video Packing</title>
+    <!-- zxing-wasm (ZXing-C++ via WebAssembly), versi dipin -->
+    <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.1/dist/iife/reader/index.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        .global-nav-bar {
+            background-color: #1e1e1e;
+            border-bottom: 1px solid #333;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            z-index: 1000;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        /* Styling Logo SVG CorelDRAW */
+        .nav-logo-svg {
+            height: 26px;
+            width: auto;
+            fill: #ffffff;
+            display: block;
+        }
+
+        .global-nav-bar .nav-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            border-left: 2px solid #333;
+            padding-left: 16px;
+        }
+
+        .video-app-scope {
+            background-color: #121212;
+            color: #ffffff;
+            min-height: calc(100vh - 60px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+            width: 100%;
+        }
+
+        .video-app-scope .app-layout { display: flex; flex-direction: row; gap: 0px; width: 100%; max-width: 98vw; align-items: stretch; }
+        .video-app-scope .panel-card { background-color: #1e1e1e; border-radius: 12px; padding: 20px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); border: 1px solid #333; display: flex; flex-direction: column; position: relative; }
+        .video-app-scope .sidebar-panel { flex: 0 0 380px; min-width: 280px; }
+        
+        /* Divider Resizer Sidebar */
+        .video-app-scope .resizer {
+            width: 6px;
+            background-color: #333;
+            cursor: col-resize;
+            transition: background-color 0.2s;
+            border-radius: 3px;
+            margin: 0 6px;
+            z-index: 10;
+        }
+        .video-app-scope .resizer:hover, .video-app-scope .resizer.is-resizing {
+            background-color: #4CAF50;
+        }
+
+        .video-app-scope .panel-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; color: #ffffff; display: flex; align-items: center; justify-content: space-between; }
+        
+        /* Badge Angka Selisih di Header Sidebar */
+        .video-app-scope .sync-bar { display:flex; align-items:center; gap:8px; font-size:0.78rem; color:#bbb; margin:-6px 0 10px; }
+        .video-app-scope .sync-dot { width:9px; height:9px; border-radius:50%; background:#888; flex:none; }
+        .video-app-scope .sync-dot.online { background:#4caf50; }
+        .video-app-scope .sync-dot.offline { background:#f44336; }
+        .video-app-scope .sync-dot.syncing { background:#ff9800; }
+        .video-app-scope .header-badge-sisa {
+            background-color: #81c784;
+            color: #121212;
+            font-size: 0.85rem;
+            font-weight: 800;
+            padding: 2px 10px;
+            border-radius: 12px;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 8px rgba(129, 199, 132, 0.4);
+        }
+
+        /* Styling Counter Eye-Catching di Sebelah Nama Kolom */
+        .video-app-scope .col-counter {
+            color: #81c784;
+            font-size: 1.2em;
+            font-weight: 800;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .video-app-scope .table-container { flex: 1; overflow-y: auto; max-height: 78vh; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background-color: #141414; position: relative; }
+        .video-app-scope .table-container::-webkit-scrollbar { width: 8px; }
+        .video-app-scope .table-container::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+        
+        /* STYLE TABEL EXCEL STYLE (Mirip Resi Pickup Kurir) */
+        .video-app-scope .record-table { 
+            width: 100%; 
+            border-collapse: separate; 
+            border-spacing: 0;
+            font-size: 0.85rem; 
+            text-align: left; 
+            table-layout: fixed; 
+        }
+        
+        .video-app-scope .record-table th, .video-app-scope .record-table td { 
+            border-right: 1px solid rgba(255, 255, 255, 0.25); 
+            border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 10px 8px; 
+            overflow: hidden; 
+            white-space: nowrap; 
+            text-overflow: ellipsis; 
+            position: relative;
+            box-sizing: border-box;
+            transition: background-color 30s ease, color 30s ease; 
+        }
+
+        .video-app-scope .record-table th { 
+            position: sticky; 
+            top: 0; 
+            background-color: #2a2a2a; 
+            color: #ffffff; 
+            font-weight: 600; 
+            z-index: 2; 
+            user-select: none;
+        }
+
+        /* Handler Resizer Kolom Tabel persis Resi Pickup Kurir */
+        .video-app-scope .record-table th .resizer-col {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 7px;
+            height: 100%;
+            cursor: col-resize;
+            user-select: none;
+            z-index: 3;
+        }
+        .video-app-scope .record-table th .resizer-col:hover,
+        .video-app-scope .record-table th .resizer-col.resizing {
+            background-color: #4CAF50;
+        }
+
+        body.is-resizing, body.is-resizing * {
+            user-select: none !important;
+        }
+        
+        .video-app-scope .record-table td { color: #eeeeee; }
+        .video-app-scope .record-table tr:nth-child(even) { background-color: #1a1a1a; }
+        .video-app-scope .record-table tr:hover { background-color: #2c2c2c; }
+        .video-app-scope .col-no { width: 40px; text-align: center; color: #aaa !important; font-weight: 600; }
+        
+        /* Highlighting Khusus Status "Sudah" */
+        .video-app-scope .active-match-row td { background-color: rgba(76, 175, 80, 0.35) !important; color: #81c784 !important; font-weight: 700; transition: none !important; }
+        .video-app-scope .fading-match-row td { background-color: transparent !important; color: #eeeeee !important; }
+
+        .video-app-scope .highlight-row td { background-color: rgba(255, 152, 0, 0.22) !important; color: #ffb74d !important; font-weight: 600; }
+        .video-app-scope .pointing-arrow { position: fixed; z-index: 10000; font-size: 3.5rem; color: #ff9800; font-weight: bold; transform: rotate(180deg) scaleX(1.6); animation: bounceHorizontal 0.8s infinite ease-in-out; pointer-events: none; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.9)); }
+        @keyframes bounceHorizontal { 0%, 100% { transform: rotate(180deg) scaleX(1.6) translateX(0); } 50% { transform: rotate(180deg) scaleX(1.6) translateX(15px); } }
+        .video-app-scope .empty-state { padding: 30px 15px; text-align: center; color: #888; font-size: 0.9rem; }
+        .video-app-scope .main-panel { flex: 1; align-items: center; justify-content: space-between; padding: 18px 24px; min-width: 400px; }
+        .video-app-scope h2 { margin-bottom: 12px; font-size: 2.8rem; text-align: center; color: #ffffff; }
+        .video-app-scope .container { position: relative; width: 100%; background: #000; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; flex: 1; max-height: 72vh; }
+        .video-app-scope video, .video-app-scope canvas { width: 100%; height: 100%; display: block; aspect-ratio: 16/9; object-fit: cover; transition: transform 0.2s ease; }
+        .video-app-scope #recordCanvas { display: none; }
+        .video-app-scope .scan-hud { position: absolute; bottom: 10px; left: 10px; z-index: 10; font: 12px/1.4 monospace; color: #9be79b; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
+        .video-app-scope .container.is-recording .scan-hud { display: none; }
+        .video-app-scope #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+        .video-app-scope .container.is-recording video, .video-app-scope .container.is-recording canvas { aspect-ratio: auto; object-fit: contain; max-height: 72vh; }
+        .video-app-scope .status-badge { position: absolute; top: 15px; left: 15px; background: rgba(0, 0, 0, 0.8); padding: 8px 14px; border-radius: 6px; font-size: 0.95rem; font-weight: 600; z-index: 10; backdrop-filter: blur(4px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .video-app-scope .status-scanning { color: #ffeb3b; }
+        .video-app-scope .status-recording { color: #ff4d4d; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.4; } }
+        .video-app-scope .scanner-mask { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+        .video-app-scope .scanner-window { position: relative; width: 75%; height: 50%; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65); }
+        .video-app-scope .corner { position: absolute; width: 24px; height: 24px; border-color: #ffffff; border-style: solid; border-width: 0; }
+        .video-app-scope .corner-tl { top: 0; left: 0; border-top-width: 4px; border-left-width: 4px; }
+        .video-app-scope .corner-tr { top: 0; right: 0; border-top-width: 4px; border-right-width: 4px; }
+        .video-app-scope .corner-bl { bottom: 0; left: 0; border-bottom-width: 4px; border-left-width: 4px; }
+        .video-app-scope .corner-br { bottom: 0; right: 0; border-bottom-width: 4px; border-right-width: 4px; }
+        .video-app-scope .laser-line { position: absolute; left: 0; width: 100%; height: 2px; background-color: #ff3333; box-shadow: 0 0 8px #ff0000; animation: scanLaser 3s infinite ease-in-out; }
+        @keyframes scanLaser { 0% { top: 0%; } 50% { top: 95%; } 100% { top: 0%; } }
+        .video-app-scope .controls { margin-top: 15px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; width: 100%; }
+        .video-app-scope button { padding: 10px 18px; font-size: 0.9rem; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; background-color: #2c2c2c; color: #ffffff; border: 1px solid #444; transition: all 0.2s ease; }
+        .video-app-scope button:hover { background-color: #3d3d3d; border-color: #666; }
+        .video-app-scope button.active { background-color: #d32f2f; border-color: #d32f2f; }
+        .video-app-scope .info { margin-top: 10px; font-size: 0.9rem; color: #aaa; text-align: center; }
+        .video-app-scope .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.8); display: flex; align-items: center; justify-content: center; z-index: 9999; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease; }
+        .video-app-scope .modal-overlay.show { opacity: 1; visibility: visible; }
+        .video-app-scope .modal-box { background-color: #1e1e1e; color: #ffffff; width: 90%; max-width: 400px; padding: 24px; border-radius: 12px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.7); border: 1px solid #333; transform: scale(0.9); transition: transform 0.3s ease; }
+        .video-app-scope .modal-overlay.show .modal-box { transform: scale(1); }
+        .video-app-scope .modal-box h3 { color: #4CAF50; margin-bottom: 10px; }
+        .video-app-scope .modal-box p { font-size: 0.95rem; color: #ccc; margin-bottom: 20px; line-height: 1.5; word-break: break-all; }
+        .video-app-scope .modal-box button { background-color: #4CAF50; color: white; width: 100%; padding: 12px; border: none; font-size: 0.95rem; }
+        .video-app-scope .modal-box button:hover { background-color: #43a047; }
+
+        @media (max-width: 850px) {
+            .video-app-scope .app-layout { flex-direction: column-reverse; max-width: 100%; }
+            .video-app-scope .sidebar-panel { flex: 1; width: 100%; }
+            .video-app-scope .resizer { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="global-nav-bar">
+        <div class="nav-brand">
+            <!-- Logo POSITIF Vektor SVG Asli CorelDRAW -->
+            <svg class="nav-logo-svg" viewBox="0 0 2050.77 562" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1044.98 529.11l27.21 -80.2c-5.78,8.36 -12.33,16.54 -19.71,24.51 -11.95,13.09 -25.68,24.05 -41.03,32.8 -15.35,8.75 -33.7,15.72 -55.21,20.89 -21.36,5.16 -45.17,7.69 -71.18,7.69 -66.62,0 -110.15,-11.5 -130.69,-34.59 -12.55,-14.13 -18.21,-32.93 -16.98,-56.45 -1.57,2.33 -3.19,4.62 -4.86,6.88 -12.22,16.34 -27.53,31.89 -45.27,43.66 -18.42,12.22 -41.94,23.47 -65.27,29.63 -24.75,6.54 -56.13,9.6 -83.23,9.6 -26.69,0 -58.61,-3.06 -79.36,-9.6 -17.5,-5.51 -35.05,-17.41 -45.17,-29.63 -10.09,-12.19 -14.38,-27.32 -15.51,-43.66 -1.13,-16.35 1.72,-34.59 8.48,-54.53l36.06 -106.3c-1.5,1.39 -3.03,2.76 -4.58,4.11 -15.39,13.39 -34.23,23.42 -56.55,30.16 -22.14,6.65 -47.77,10.02 -76.83,10.02l-58.28 0 -66.15 195 -141.03 0 167 -492.3 189.43 0c25.04,0 46.05,2.43 63.15,7.38 17.09,4.96 30.93,12.98 41.46,24.16 9.07,9.37 14.49,21.84 16.44,37.42 12.48,-15.27 27.65,-28.38 45.53,-39.32 36.83,-22.47 84.72,-34.07 143.63,-34.7 60.15,0.63 100.86,12.24 122.44,34.7 12.8,13.4 19.35,30.05 19.65,49.94 14.28,-21.54 32.69,-38.89 55.19,-52.06 36.71,-21.3 80.94,-31.95 132.54,-31.95l25.31 0c13.22,0 29.54,2.32 48.97,6.96 19.28,4.65 35.3,12.35 47.9,23.21 6.28,5.35 11.2,11.77 14.76,19.24l-23.81 70.43 161.93 0 -127.84 376.89 -138.54 0zm-491.03 -147.33c-1.36,4.01 -14.77,43.58 2.21,52.94 39.95,22.05 62.06,-43.13 64.13,-49.24l0.86 -2.54c70.7,-218.99 78.63,-217.54 76.64,-237.4 -2.48,-24.64 -54.67,-26.6 -71.65,23.42l-3.72 10.97 -0.75 2.22 -0.64 1.9 -67.08 197.74zm558.31 -50.99l51.71 -152.45 -141.3 0 9.25 -29.73c1.58,-5.48 0.2,-10.44 -4.31,-14.76 -4.51,-4.33 -10.44,-6.54 -17.81,-6.54 -9.46,0 -18.28,2.21 -26.45,6.64 -8.18,4.44 -13.45,10.13 -15.85,17.2 -4.76,14.03 3.58,29.21 24.81,45.76l68.76 53.16c11.26,8.65 20.49,17.5 27.89,26.47 7.39,8.96 12.73,17.83 15.87,26.58 3.15,8.76 5.33,16.67 6.84,23.73 0.24,1.3 0.43,2.62 0.59,3.95zm-334 14.19l127.94 0 -14.99 44.19c-10.77,31.75 -4.77,47.67 18.04,47.67 10.57,0 20.13,-3.17 28.19,-9.28 8.23,-6.22 14.04,-14.34 17.48,-24.47 4.47,-13.17 5.9,-24.35 4.25,-33.43 -1.65,-9.07 -5.99,-17.61 -12.83,-25.73 -6.81,-8.24 -18.83,-19.51 -36.09,-33.87l-47.08 -39.97c-21.59,-18.02 -34.83,-37.39 -39.8,-58.12l-45.11 133zm-460.82 -218.42l-40.32 118.87 8.07 0c7.65,0 13.39,-0.11 17.53,-0.43 4,-0.31 8.84,-1.06 14.48,-2.1 5.68,-1.17 10.35,-3.07 13.72,-5.59 3.5,-2.53 7.36,-6.12 11.51,-10.55 4.28,-4.43 8.02,-10.12 11.36,-17.09 3.37,-7.06 6.65,-15.5 10.01,-25.41 7.33,-21.61 8.66,-36.59 4.15,-45.03 -4.65,-8.44 -16.15,-12.66 -34.65,-12.66l-15.86 0zm1067.17 402.56l127.84 -376.89c46.17,0.02 92.34,0.07 138.5,0.1l-127.81 376.79 -138.53 0zm304.73 -397.27c-66.29,-0.01 -132.97,-0.12 -198.99,-0.12l-134.8 397.39 -143.4 0 134.8 -397.39 -167.23 0 32.08 -94.91 796.56 0 -32.59 96.08 -142.57 0 -26.43 77.93 135.32 0 -32.15 94.81 -135.33 0 -75.81 223.48 -144.23 0 134.76 -397.27z"/>
+            </svg>
+            <div class="nav-title">Resi Video Packing</div>
+        </div>
+    </div>
+
+    <div id="video-view" class="video-app-scope">
+        <div id="pointingArrowVideo" class="pointing-arrow" style="display: none;">➔</div>
+        <div id="modalOverlayVideo" class="modal-overlay">
+            <div class="modal-box">
+                <h3>Rekaman Selesai!</h3>
+                <p id="modalMessageVideo">Video berhasil didownload otomatis</p>
+                <button id="btnCloseModalVideo">Tutup</button>
+            </div>
+        </div>
+        <div id="duplicateModalOverlayVideo" class="modal-overlay">
+            <div class="modal-box" style="border-color: #ff9800;">
+                <h3 style="color: #ff9800;">Perhatian</h3>
+                <p style="line-height: 1.6;">Resi telah berhasil direkam sebelumnya.<br>Bisa dicek di list<br>Silakan scan resi berikutnya</p>
+                <button id="btnCloseDuplicateVideo" style="background-color: #ff9800;">Oke</button>
+            </div>
+        </div>
+        <div class="app-layout">
+            <!-- Sidebar Panel -->
+            <div class="panel-card sidebar-panel" id="sidebarPanelVideo">
+                <div class="panel-title">
+                    <span>Telah Direkam (Hari Ini)</span>
+                    <!-- Badge Selisih (Resi Print - Resi sudah packing) -->
+                    <span id="headerBadgeSisa" class="header-badge-sisa">0</span>
+                </div>
+                <div class="sync-bar"><span id="syncDot" class="sync-dot"></span><span id="syncText">Memeriksa koneksi...</span></div>
+                <div class="table-container">
+                    <table class="record-table" id="recordTableElement">
+                        <thead>
+                            <tr>
+                                <th class="col-no" id="th-col-0">No</th>
+                                <th id="th-col-1">Resi Print <span id="scanCounterPrint" class="col-counter">[0]</span></th>
+                                <th id="th-col-2">Resi sudah packing <span id="recordCountVideo" class="col-counter">[0]</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBodyVideo"></tbody>
+                    </table>
+                    <div id="emptyStateVideo" class="empty-state">Belum ada resi direkam hari ini</div>
+                </div>
+            </div>
+
+            <!-- Divider Resizer (Bisa Digeser) -->
+            <div class="resizer" id="dragResizerVideo"></div>
+
+            <!-- Main Panel -->
+            <div class="panel-card main-panel">
+                <h2>Resi Video Packing</h2>
+                <div class="container" id="mainContainerVideo">
+                    <div id="statusBadgeVideo" class="status-badge status-scanning">Inisialisasi Pemindai...</div>
+                    <div id="scanHud" class="scan-hud">memuat...</div>
+                    <div id="scannerMaskVideo" class="scanner-mask">
+                        <div class="scanner-window">
+                            <div class="corner corner-tl"></div>
+                            <div class="corner corner-tr"></div>
+                            <div class="corner corner-bl"></div>
+                            <div class="corner corner-br"></div>
+                            <div class="laser-line"></div>
+                        </div>
+                    </div>
+                    <video id="videoElement" autoplay playsinline muted></video>
+                    <canvas id="overlayCanvas"></canvas>
+                    <canvas id="recordCanvas"></canvas>
+                </div>
+                <div class="controls">
+                    <button id="btnSwitchCam" style="display:none;">Switch Kamera</button>
+                    <button id="btnFlash" style="display:none;">Flash: OFF</button>
+                    <button id="btnMirrorLR" class="active">Mirror Kanan-Kiri: ON</button>
+                    <button id="btnMirrorUD">Mirror Atas-Bawah: OFF</button>
+                    <button id="btnManualStop" style="display:none; background-color: #d32f2f; border-color: #d32f2f;">Stop Rekam</button>
+                </div>
+                <div class="info">
+                    <div id="infoScanning">Pindai barcode resi di dalam kotak untuk mulai merekam otomatis.</div>
+                    <div id="infoRecording" style="display: none;">Tekan <b>Spasi</b> atau tombol manual untuk berhenti.</div>
+                </div>
+            </div>
+        </div>
+        <a id="downloadLinkVideo" style="display:none;"></a>
+    </div>
+
+<script>
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxvgi8zUkxdByFB78J6gKaTE0mdHlUtH8j747cBJdwIMQCEGJEB_tbQAKRZIFVd5x7s/exec";
+
+    // Mode konfirmasi dari Apps Script:
+    //  "json"   = doPost mengembalikan {status:"SUCCESS"} (AMAN, disarankan, perlu app script baru)
+    //  "legacy" = app script lama tanpa konfirmasi (item dianggap terkirim bila request selesai tanpa error)
+    const ACK_MODE = "json";
+    const SYNC_INTERVAL_MS = 60000;   // sync berkala saat online
+    const POST_TIMEOUT_MS = 20000;
+
+    let masterRecords = [];
+    let offlineQueue = [];   // dimuat di DOMContentLoaded
+    let isSyncing = false;
+    let needResync = false;
+    let lastSyncOk = null;
+    let highlightTimerVideo = null;
+    let currentMatchResiVideo = "";
+
+    // Elements Sidebar & Resizer
+    const resizerVideo = document.getElementById('dragResizerVideo');
+    const sidebarVideo = document.getElementById('sidebarPanelVideo');
+    const headerBadgeSisa = document.getElementById('headerBadgeSisa');
+    let isResizingVideo = false;
+
+    // --- FITUR AUTO-SAVE LEBAR SIDEBAR PANEL ---
+    function loadSavedSidebarWidth() {
+        const savedWidth = localStorage.getItem('resi_sidebar_width');
+        if (savedWidth) {
+            sidebarVideo.style.flex = `0 0 ${savedWidth}px`;
+        }
+    }
+
+    resizerVideo.addEventListener('mousedown', (e) => {
+        isResizingVideo = true;
+        resizerVideo.classList.add('is-resizing');
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizingVideo) return;
+        const containerRect = sidebarVideo.parentElement.getBoundingClientRect();
+        const newWidth = e.clientX - containerRect.left;
+        if (newWidth > 260 && newWidth < containerRect.width * 0.7) {
+            sidebarVideo.style.flex = `0 0 ${newWidth}px`;
+            localStorage.setItem('resi_sidebar_width', newWidth);
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizingVideo) {
+            isResizingVideo = false;
+            resizerVideo.classList.remove('is-resizing');
+            document.body.style.cursor = 'default';
+        }
+    });
+
+    // --- FITUR AUTO-SAVE LEBAR KOLOM TABEL (EXCEL STYLE - PERSIS RESI PICKUP KURIR) ---
+    function makeColumnsResizable() {
+        const table = document.getElementById('recordTableElement');
+        const headers = table.querySelectorAll('th');
+
+        headers.forEach((th) => {
+            // Jangan pasang resizer di kolom 'No' jika tidak ingin diubah
+            if (th.id === 'th-col-0') {
+                th.style.width = '40px';
+                return;
+            }
+
+            const resizer = document.createElement('div');
+            resizer.className = 'resizer-col';
+            th.appendChild(resizer);
+
+            resizer.addEventListener('mousedown', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const startX = e.pageX;
+                const startWidth = th.offsetWidth;
+                resizer.classList.add('resizing');
+                document.body.classList.add('is-resizing');
+
+                function onMouseMove(e) {
+                    const newWidth = Math.max(50, startWidth + (e.pageX - startX));
+                    th.style.width = newWidth + 'px';
+                }
+
+                function onMouseUp() {
+                    resizer.classList.remove('resizing');
+                    document.body.classList.remove('is-resizing');
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    saveColumnWidths();
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        });
+    }
+
+    function saveColumnWidths() {
+        const headers = document.querySelectorAll('#recordTableElement th');
+        const widths = Array.from(headers).map(th => th.style.width || th.offsetWidth + 'px');
+        localStorage.setItem('resi_video_excel_col_widths', JSON.stringify(widths));
+    }
+
+    function loadColumnWidths() {
+        const saved = localStorage.getItem('resi_video_excel_col_widths');
+        if (saved) {
+            try {
+                const widths = JSON.parse(saved);
+                const headers = document.querySelectorAll('#recordTableElement th');
+                headers.forEach((th, index) => {
+                    if (widths[index]) th.style.width = widths[index];
+                });
+            } catch (e) {}
+        }
+    }
+
+    function cleanCode(str) {
+        return String(str || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    }
+
+    function getTodayString() {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    function parseDateString(timeStr) {
+        if (!timeStr) return getTodayString();
+        // Apps Script menulis bulan bahasa Inggris ("7 November 2026 - 14:30"); bulan Indonesia tetap didukung
+        const monthMap = {
+            januari: "01", january: "01", februari: "02", february: "02", maret: "03", march: "03",
+            april: "04", mei: "05", may: "05", juni: "06", june: "06", juli: "07", july: "07",
+            agustus: "08", august: "08", september: "09", oktober: "10", october: "10",
+            november: "11", desember: "12", december: "12"
+        };
+        const parts = String(timeStr).trim().split(/\s+/);
+        if (parts.length >= 3) {
+            const day = String(parts[0]).padStart(2, '0');
+            const m = monthMap[String(parts[1]).toLowerCase()];
+            const year = parts[2];
+            if (m && /^\d{4}$/.test(year)) return `${year}-${m}-${day}`;
+        }
+        return getTodayString();
+    }
+
+    function saveMasterToStorage() {
+        localStorage.setItem('resi_master_records', JSON.stringify(masterRecords));
+    }
+
+    function loadMasterFromStorage() {
+        const local = localStorage.getItem('resi_master_records');
+        if (local) {
+            try { masterRecords = JSON.parse(local); } catch(e) { masterRecords = []; }
+        }
+    }
+
+    // ================= QUEUE OFFLINE =================
+    function makeId() {
+        return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    }
+
+    function loadOfflineQueue() {
+        let arr = [];
+        try { arr = JSON.parse(localStorage.getItem('resi_offline_queue') || '[]'); } catch (e) { arr = []; }
+        if (!Array.isArray(arr)) arr = [];
+        // migrasi item lama (tanpa id / waktu)
+        return arr.filter(it => it && it.resi).map(it => {
+            if (!it.id) it.id = makeId();
+            if (!it.ts) it.ts = new Date().toISOString();
+            if (!it.time) it.time = getFormattedDateTimeVideo(new Date(it.ts));
+            if (!it.date) it.date = getTodayString();
+            return it;
+        });
+    }
+
+    function saveOfflineQueue() {
+        localStorage.setItem('resi_offline_queue', JSON.stringify(offlineQueue));
+        updateSyncStatus();
+    }
+
+    // Semua scan WAJIB lewat sini: masuk antrean + tersimpan di localStorage dulu.
+    function enqueueScan(action, resiCode) {
+        const now = new Date();
+        const item = {
+            id: makeId(),
+            action: action,
+            resi: resiCode,
+            ts: now.toISOString(),                 // waktu scan asli
+            time: getFormattedDateTimeVideo(now),  // format tampil, sama dgn kolom sheet
+            date: getTodayString()
+        };
+        offlineQueue.push(item);
+        saveOfflineQueue();
+        setTimeout(requestSync, 500);
+        return item;
+    }
+
+    // ================= KIRIM KE SHEET =================
+    async function postItem(item) {
+        const body = JSON.stringify(item);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS);
+        try {
+            if (ACK_MODE === "legacy") {
+                await fetch(WEB_APP_URL, {
+                    method: "POST", mode: "no-cors",
+                    headers: { "Content-Type": "text/plain" }, body: body, signal: ctrl.signal
+                });
+                return true;
+            }
+            const res = await fetch(WEB_APP_URL, {
+                method: "POST",
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
+                body: body, signal: ctrl.signal
+            });
+            const j = await res.json();
+            if (j && j.status === "REJECTED") console.warn("Item ditolak sheet, dibuang dari antrean:", item, j.message);
+            return !!(j && (j.status === "SUCCESS" || j.status === "REJECTED"));
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // Kirim satu per satu, urut waktu scan. Hapus dari antrean HANYA setelah terkonfirmasi.
+    async function flushQueue() {
+        while (offlineQueue.length > 0 && navigator.onLine) {
+            const item = offlineQueue[0];
+            let ok = false;
+            try { ok = await postItem(item); } catch (e) { ok = false; }
+            if (!ok) return false;               // berhenti, item tetap di antrean, coba lagi nanti
+            offlineQueue = offlineQueue.filter(q => q.id !== item.id);
+            saveOfflineQueue();
+        }
+        return offlineQueue.length === 0;
+    }
+
+    // ================= DATA SHEET =================
+    function buildRecordsFromSheet(rows) {
+        return rows.map(item => ({
+            colA: item.colA ? String(item.colA).trim() : "",
+            timeA: item.timeA || "",
+            dateA: parseDateString(item.timeA),
+            colB: item.colB ? String(item.colB).trim() : "",
+            timeB: item.timeB || "",
+            dateB: parseDateString(item.timeB),
+            colC: item.colC ? String(item.colC).trim() : "",
+            timeC: item.timeC || "",
+            dateC: parseDateString(item.timeC)
+        }));
+    }
+
+    async function fetchSheet() {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS);
+        try {
+            const res = await fetch(WEB_APP_URL, { signal: ctrl.signal });
+            return await res.json();
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // Terapkan satu scan ke sekumpulan record (idempotent: aman dipanggil berulang).
+    function applyScanToRecords(records, scannedVal, dateStr, timeStr) {
+        const cleanScanned = cleanCode(scannedVal);
+        const matchRow = records.find(r => cleanCode(r.colA) === cleanScanned && r.colB === "");
+        if (matchRow) {
+            matchRow.colB = "Sudah";
+            matchRow.dateB = dateStr;
+            return;
+        }
+        const existingB = records.find(r => cleanCode(r.colB) === cleanScanned);
+        if (existingB) return;
+        const matchA = records.find(r => cleanCode(r.colA) === cleanScanned);
+        if (matchA) {
+            matchA.colB = "Sudah";
+            matchA.dateB = dateStr;
+            return;
+        }
+        const matchC = records.find(r => r.colB === "" && cleanCode(r.colC) === cleanScanned);
+        if (matchC) {
+            matchC.colB = scannedVal;
+            matchC.timeB = timeStr || "";
+            matchC.dateB = dateStr;
+            return;
+        }
+        records.push({
+            colA: "", timeA: "", dateA: "",
+            colB: scannedVal, timeB: timeStr || "", dateB: dateStr,
+            colC: "", timeC: "", dateC: ""
+        });
+    }
+
+    // ================= ALUR SYNC (SATU PINTU) =================
+    // 1) kirim antrean  2) ambil sheet  3) replay sisa antrean  4) baru timpa data lokal
+    async function fullSync() {
+        if (isSyncing) { needResync = true; return; }
+        if (!navigator.onLine) { updateSyncStatus(); return; }
+        isSyncing = true;
+        updateSyncStatus();
+        try {
+            await flushQueue();
+
+            const json = await fetchSheet();
+            if (json && json.status === "SUCCESS" && Array.isArray(json.data) && json.data.length > 0) {
+                const fresh = buildRecordsFromSheet(json.data);
+                // replay scan yang belum terkirim supaya tidak hilang dari tampilan
+                offlineQueue.forEach(it => applyScanToRecords(fresh, it.resi, it.date, it.time));
+                // dari sini sampai assign: sinkron (tidak ada scan yang bisa menyela)
+                masterRecords = fresh;
+                saveMasterToStorage();
+                lastSyncOk = new Date();
+            }
+        } catch (err) {
+            console.warn("Sync gagal, tetap memakai data lokal.", err);
+        } finally {
+            isSyncing = false;
+            renderTodayListsFromMaster();
+            updateSyncStatus();
+            if (needResync) { needResync = false; setTimeout(fullSync, 300); }
+        }
+    }
+
+    function requestSync() { fullSync(); }
+
+    function updateSyncStatus() {
+        const dot = document.getElementById('syncDot');
+        const txt = document.getElementById('syncText');
+        if (!dot || !txt) return;
+        const pending = offlineQueue.length;
+        const pendTxt = pending > 0 ? ` | ${pending} belum terlapor` : "";
+        if (!navigator.onLine) {
+            dot.className = 'sync-dot offline';
+            txt.textContent = 'Offline - data disimpan di perangkat' + pendTxt;
+        } else if (isSyncing) {
+            dot.className = 'sync-dot syncing';
+            txt.textContent = 'Menyinkronkan...' + pendTxt;
+        } else {
+            dot.className = 'sync-dot online';
+            txt.textContent = (pending > 0 ? 'Online - menunggu kirim' : 'Online - semua terlapor') + pendTxt;
+        }
+    }
+
+    window.addEventListener('online', requestSync);
+    window.addEventListener('offline', updateSyncStatus);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) requestSync(); });
+    setInterval(() => { if (navigator.onLine) requestSync(); }, SYNC_INTERVAL_MS);
+
+    window.addEventListener('beforeunload', (e) => {
+        if (offlineQueue.length > 0) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    function renderTodayListsFromMaster() {
+        const todayStr = getTodayString();
+        tableBodyVideo.innerHTML = "";
+        let countA = 0;
+        let countB = 0;
+        let matchedRowEl = null;
+
+        masterRecords.forEach(item => {
+            const isTodayA = (item.dateA === todayStr && item.colA !== "");
+            const isTodayB = (item.dateB === todayStr && item.colB !== "");
+            const isToday = isTodayA || isTodayB;
+
+            if (isToday) {
+                if (item.colA !== "") countA++;
+                if (item.colB !== "") countB++;
+                
+                const tr = addResiRowToTableDOM(item.colA, item.colB, Math.max(countA, countB));
+                if (currentMatchResiVideo && (cleanCode(item.colA) === cleanCode(currentMatchResiVideo) || cleanCode(item.colB) === cleanCode(currentMatchResiVideo))) {
+                    matchedRowEl = tr;
+                }
+            }
+        });
+
+        if (Math.max(countA, countB) === 0) {
+            emptyStateVideo.style.display = 'block';
+        } else {
+            emptyStateVideo.style.display = 'none';
+        }
+        
+        scanCounterPrint.innerText = `[${countA}]`;
+        recordCountVideo.innerText = `[${countB}]`;
+
+        // Update badge angka selisih (Resi Print - Resi sudah packing)
+        const sisaCount = Math.max(0, countA - countB);
+        headerBadgeSisa.innerText = sisaCount;
+
+        if (matchedRowEl) {
+            applyHighlightAndScrollVideo(matchedRowEl);
+        } else {
+            const wrapper = document.querySelector('#video-view .table-container');
+            if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+        }
+    }
+
+    function addResiRowToTableDOM(colAVal, colBVal, index) {
+        emptyStateVideo.style.display = 'none';
+        const tr = document.createElement('tr');
+        
+        const tdNo = document.createElement('td');
+        tdNo.className = 'col-no';
+        tdNo.innerText = index;
+        
+        const tdColA = document.createElement('td');
+        tdColA.innerText = colAVal || "-";
+        
+        const tdColB = document.createElement('td');
+        tdColB.innerText = colBVal || "";
+        
+        tr.appendChild(tdNo);
+        tr.appendChild(tdColA);
+        tr.appendChild(tdColB);
+        tableBodyVideo.appendChild(tr);
+
+        return tr;
+    }
+
+    function clearPreviousMatchHighlightVideo() {
+        if (highlightTimerVideo) clearTimeout(highlightTimerVideo);
+        const activeRows = tableBodyVideo.querySelectorAll('.active-match-row, .fading-match-row');
+        activeRows.forEach(row => {
+            row.classList.remove('active-match-row', 'fading-match-row');
+        });
+    }
+
+    function applyHighlightAndScrollVideo(targetTr) {
+        clearPreviousMatchHighlightVideo();
+        
+        targetTr.classList.add('active-match-row');
+        targetTr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        highlightTimerVideo = setTimeout(() => {
+            targetTr.classList.remove('active-match-row');
+            targetTr.classList.add('fading-match-row');
+        }, 100);
+    }
+
+    function isDuplicateVideo(resiVal) {
+        const targetClean = cleanCode(resiVal);
+        return masterRecords.some(r => {
+            const cleanB = cleanCode(r.colB);
+            const cleanA = cleanCode(r.colA);
+            if (r.colB === "Sudah" && cleanA === targetClean) return true;
+            if (r.colB !== "" && r.colB !== "Sudah" && cleanB === targetClean) return true;
+            return false;
+        });
+    }
+
+    function addOrUpdateLocalVideoRecord(scannedVal) {
+        currentMatchResiVideo = scannedVal;
+        applyScanToRecords(masterRecords, scannedVal, getTodayString(), getFormattedDateTimeVideo());
+        saveMasterToStorage();
+        renderTodayListsFromMaster();
+    }
+
+    const video = document.getElementById('videoElement');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const overlayCtx = overlayCanvas.getContext('2d');
+    const recordCanvas = document.getElementById('recordCanvas');
+    const recordCtx = recordCanvas.getContext('2d', { alpha: false });
+    
+    const mainContainerVideo = document.getElementById('mainContainerVideo');
+    const statusBadgeVideo = document.getElementById('statusBadgeVideo');
+    const scannerMaskVideo = document.getElementById('scannerMaskVideo');
+    
+    const modalOverlayVideo = document.getElementById('modalOverlayVideo');
+    const modalMessageVideo = document.getElementById('modalMessageVideo');
+    const btnCloseModalVideo = document.getElementById('btnCloseModalVideo');
+
+    const duplicateModalOverlayVideo = document.getElementById('duplicateModalOverlayVideo');
+    const btnCloseDuplicateVideo = document.getElementById('btnCloseDuplicateVideo');
+    const pointingArrowVideo = document.getElementById('pointingArrowVideo');
+    
+    const btnSwitchCam = document.getElementById('btnSwitchCam');
+    const btnFlash = document.getElementById('btnFlash');
+    const btnMirrorLR = document.getElementById('btnMirrorLR');
+    const btnMirrorUD = document.getElementById('btnMirrorUD');
+    const btnManualStop = document.getElementById('btnManualStop');
+    const downloadLinkVideo = document.getElementById('downloadLinkVideo');
+
+    const tableBodyVideo = document.getElementById('tableBodyVideo');
+    const emptyStateVideo = document.getElementById('emptyStateVideo');
+    const recordCountVideo = document.getElementById('recordCountVideo');
+    const scanCounterPrint = document.getElementById('scanCounterPrint');
+
+    let stream = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+    let isDecoding = false;
+    let useFrontCamera = false;
+    let flashOn = false;
+    let isMirrorLR = true;
+    let isMirrorUD = false;
+    let trackCapabilities = null;
+    
+    let detectedBarcodeText = "";
+    let formattedDateTime = "";
+    let fileDateString = "";
+    let scanInterval = null;
+    let canvasAnimationId = null;
+
+    let recordingSeconds = 0;
+    let recordingTimer = null;
+    let isDuplicateAlertActive = false;
+
+
+    // ===================== KONFIGURASI SCANNER (zxing-wasm) =====================
+    const SCAN_CFG = {
+        camWidth: 1920, camHeight: 1080, camFps: 30,
+        formats: ['Code128', 'QRCode'],   // hanya format yang dipakai resi
+        preferFormat: 'code128',          // kalau resi punya barcode + QR, pilih ini dulu
+        roiPadding: 0.06,                 // margin ekstra di sekitar kotak scan
+        maxDecodeWidth: 1600,             // ROI lebih lebar dari ini akan diperkecil
+        minIntervalMs: 50,                // jeda minimal antar decode
+        fullFrameEvery: 8,                // tiap N percobaan, scan seluruh frame sebagai cadangan
+        confirmCount: 2,                  // harus terbaca N kali berturut-turut
+        confirmWindowMs: 900,
+        minLength: 6,
+        tuneSharpness: true, sharpnessLevel: 0.7,
+        beep: true,
+        recBitrate: 4000000,
+        showHud: false
+    };
+    const OPTS_FAST = { formats: SCAN_CFG.formats, tryHarder: false, tryRotate: true, tryInvert: false, tryDownscale: true, maxNumberOfSymbols: 2 };
+    const OPTS_HARD = { formats: SCAN_CFG.formats, tryHarder: true,  tryRotate: true, tryInvert: false, tryDownscale: true, maxNumberOfSymbols: 2 };
+
+    let zxReady = false, scanActive = false, scanToken = 0, scanAttempt = 0;
+    let lastRead = { text: '', count: 0, t: 0 };
+    let roiCache = null, roiCacheT = 0;
+    const scanCanvas = document.createElement('canvas');
+    const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+    const hud = { decodes: 0, ms: 0, roiW: 0, roiH: 0, frames: 0, t: performance.now(), camFps: 0, dps: 0, avgMs: 0 };
+    let fpsToken = 0, lastDrawnVT = -1, overlayDirty = false, audioCtx = null;
+    let scannerBuffer = "";
+    let scannerTimer = null;
+
+
+    function showModalVideo(fileName) {
+        modalMessageVideo.innerHTML = `Video<br><b>${fileName}</b><br>berhasil didownload otomatis`;
+        modalOverlayVideo.classList.add('show');
+        btnCloseModalVideo.focus();
+    }
+
+    btnCloseModalVideo.addEventListener('click', () => {
+        modalOverlayVideo.classList.remove('show');
+    });
+
+    btnCloseDuplicateVideo.addEventListener('click', () => {
+        duplicateModalOverlayVideo.classList.remove('show');
+        pointingArrowVideo.style.display = 'none';
+        isDuplicateAlertActive = false;
+    });
+
+    function clearHighlightsVideo() {
+        const rows = tableBodyVideo.getElementsByTagName('tr');
+        for (let tr of rows) {
+            tr.classList.remove('highlight-row');
+        }
+        pointingArrowVideo.style.display = 'none';
+    }
+
+    function handleDuplicateBarcodeVideo(barcodeVal) {
+        if (isDuplicateAlertActive || isRecording) return;
+        isDuplicateAlertActive = true;
+        clearHighlightsVideo();
+
+        const rows = tableBodyVideo.getElementsByTagName('tr');
+        let targetRow = null;
+        for (let i = 0; i < rows.length; i++) {
+            const cellA = rows[i].cells[1] ? rows[i].cells[1].innerText : "";
+            const cellB = rows[i].cells[2] ? rows[i].cells[2].innerText : "";
+            if (cleanCode(cellA) === cleanCode(barcodeVal) || cleanCode(cellB) === cleanCode(barcodeVal)) {
+                targetRow = rows[i];
+                rows[i].classList.add('highlight-row');
+            }
+        }
+        if (targetRow) {
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => {
+                const rowRect = targetRow.getBoundingClientRect();
+                pointingArrowVideo.style.top = `${rowRect.top + (rowRect.height / 2) - 22}px`;
+                pointingArrowVideo.style.left = `${rowRect.right + 12}px`;
+                pointingArrowVideo.style.display = 'block';
+            }, 200);
+        }
+        duplicateModalOverlayVideo.classList.add('show');
+        btnCloseDuplicateVideo.focus();
+    }
+
+    async function startVideoModule() {
+        try {
+            if (!window.ZXingWASM) throw new Error("Library zxing-wasm gagal dimuat (cek koneksi internet).");
+            if (!zxReady) {
+                // warm-up: memuat & kompilasi WASM sekali di awal
+                await ZXingWASM.readBarcodes(new ImageData(64, 64), OPTS_FAST);
+                zxReady = true;
+            }
+            statusBadgeVideo.innerText = "Status: Menunggu Barcode Resi...";
+            if (SCAN_CFG.showHud) setInterval(updateHud, 500); else document.getElementById('scanHud').style.display = 'none';
+            initCameraVideo();
+        } catch (e) {
+            alert("Gagal memuat engine pemindai: " + e.message);
+        }
+    }
+
+    function updateHud() {
+        const now = performance.now(), dt = (now - hud.t) / 1000;
+        if (dt <= 0) return;
+        hud.camFps = hud.frames / dt;
+        hud.dps = hud.decodes / dt;
+        hud.avgMs = hud.decodes ? hud.ms / hud.decodes : hud.avgMs;
+        hud.frames = 0; hud.decodes = 0; hud.ms = 0; hud.t = now;
+        let res = '-';
+        if (stream) {
+            const st = stream.getVideoTracks()[0].getSettings();
+            res = `${st.width}x${st.height}`;
+        }
+        document.getElementById('scanHud').textContent =
+            `${res} @${hud.camFps.toFixed(0)}fps | ROI ${hud.roiW}x${hud.roiH} | decode ${hud.avgMs.toFixed(0)}ms (${hud.dps.toFixed(0)}/s)`;
+    }
+
+    function startFpsMeter() {
+        if (!video.requestVideoFrameCallback) return;
+        const t = ++fpsToken;
+        const f = () => { if (t !== fpsToken) return; hud.frames++; video.requestVideoFrameCallback(f); };
+        video.requestVideoFrameCallback(f);
+    }
+
+    async function tuneTrack(track) {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const adv = {};
+        if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+        if (caps.exposureMode && caps.exposureMode.includes('continuous')) adv.exposureMode = 'continuous';
+        if (SCAN_CFG.tuneSharpness && caps.sharpness && typeof caps.sharpness.max === 'number') {
+            adv.sharpness = Math.round(caps.sharpness.min + (caps.sharpness.max - caps.sharpness.min) * SCAN_CFG.sharpnessLevel);
+        }
+        const base = { width: { ideal: SCAN_CFG.camWidth }, height: { ideal: SCAN_CFG.camHeight }, frameRate: { ideal: SCAN_CFG.camFps } };
+        if (!Object.keys(adv).length) return;
+        try {
+            await track.applyConstraints({ ...base, advanced: [adv] });
+        } catch (e) {
+            for (const [k, v] of Object.entries(adv)) {
+                try { await track.applyConstraints({ ...base, advanced: [{ [k]: v }] }); } catch (e2) {}
+            }
+        }
+    }
+
+    function beep() {
+        if (!SCAN_CFG.beep) return;
+        try {
+            audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.frequency.value = 1200; g.gain.value = 0.15;
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(); o.stop(audioCtx.currentTime + 0.08);
+        } catch (e) {}
+    }
+
+    async function initCameraVideo() {
+        stopVideoCameraModule();
+        const constraints = {
+            video: { facingMode: useFrontCamera ? 'user' : 'environment', width: { ideal: SCAN_CFG.camWidth }, height: { ideal: SCAN_CFG.camHeight }, frameRate: { ideal: SCAN_CFG.camFps, max: SCAN_CFG.camFps } },
+            audio: true
+        };
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            await video.play();
+
+            const w = video.videoWidth || SCAN_CFG.camWidth;
+            const h = video.videoHeight || SCAN_CFG.camHeight;
+            overlayCanvas.width = w; overlayCanvas.height = h;
+            recordCanvas.width = w; recordCanvas.height = h;
+
+            const videoTrack = stream.getVideoTracks()[0];
+            trackCapabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+            await tuneTrack(videoTrack);
+            roiCache = null;
+            startFpsMeter();
+
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            if (videoDevices.length > 1) btnSwitchCam.style.display = 'inline-block';
+
+            if (trackCapabilities.torch) btnFlash.style.display = 'inline-block';
+            else btnFlash.style.display = 'none';
+
+            updateVideoTransform();
+            startRenderLoopVideo();
+            if (!isRecording) startScanningVideo();
+        } catch (err) {
+            alert("Gagal mengakses kamera/mikrofon: " + err.message);
+        }
+    }
+
+    function stopVideoCameraModule() {
+        stopScanLoop();
+        fpsToken++;
+        if (canvasAnimationId) cancelAnimationFrame(canvasAnimationId);
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+        }
+    }
+
+    function startRenderLoopVideo() {
+        if (canvasAnimationId) cancelAnimationFrame(canvasAnimationId);
+        function render() {
+            if (isRecording) {
+                // hanya gambar saat ada frame kamera baru (hemat CPU di 1080p)
+                const vt = video.currentTime;
+                if (vt !== lastDrawnVT || vt === 0) {
+                    lastDrawnVT = vt;
+                    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    recordCtx.drawImage(video, 0, 0, recordCanvas.width, recordCanvas.height);
+                    drawOverlayTextVideo(overlayCtx, overlayCanvas);
+                    drawOverlayTextVideo(recordCtx, recordCanvas);
+                    overlayDirty = true;
+                }
+            } else if (overlayDirty) {
+                overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                overlayDirty = false;
+            }
+            canvasAnimationId = requestAnimationFrame(render);
+        }
+        render();
+    }
+
+    function formatDurationVideo(totalSecs) {
+        const m = Math.floor(totalSecs / 60);
+        const s = totalSecs % 60;
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function drawOverlayTextVideo(targetCtx, targetCanvas) {
+        const paddingX = 20; const paddingY = 14;
+        const fontSize1 = Math.max(16, Math.floor(targetCanvas.height * 0.035));
+        const fontSize2 = Math.floor(fontSize1 * 0.9);
+        const line1 = detectedBarcodeText.toUpperCase();
+        const line2 = formattedDateTime;
+        const line3 = formatDurationVideo(recordingSeconds);
+
+        targetCtx.save();
+        targetCtx.textBaseline = 'top';
+        targetCtx.font = `bold ${fontSize1}px Arial`;
+        const textMetrics1 = targetCtx.measureText(line1);
+        targetCtx.font = `${fontSize2}px Arial`;
+        const textMetrics2 = targetCtx.measureText(line2);
+        
+        const maxTextWidth1 = Math.max(textMetrics1.width, textMetrics2.width);
+        const spacing = 6;
+        const boxHeight1 = fontSize1 + spacing + fontSize2 + (paddingY * 2);
+        const boxWidth1 = maxTextWidth1 + (paddingX * 2);
+        
+        const boxX1 = 30;
+        const boxY1 = targetCanvas.height - boxHeight1 - 30;
+
+        targetCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        targetCtx.fillRect(boxX1, boxY1, boxWidth1, boxHeight1);
+
+        targetCtx.fillStyle = '#FFFFFF';
+        targetCtx.font = `bold ${fontSize1}px Arial`;
+        targetCtx.fillText(line1, boxX1 + paddingX, boxY1 + paddingY);
+
+        targetCtx.font = `${fontSize2}px Arial`;
+        targetCtx.fillText(line2, boxX1 + paddingX, boxY1 + paddingY + fontSize1 + spacing);
+
+        const timerFontSize = Math.max(28, Math.floor(targetCanvas.height * 0.065)); 
+        targetCtx.font = `bold ${timerFontSize}px Arial`;
+        const textMetrics3 = targetCtx.measureText(line3);
+        const boxHeight2 = timerFontSize + (paddingY * 2);
+        const boxWidth2 = textMetrics3.width + (paddingX * 2);
+
+        const boxX2 = targetCanvas.width - boxWidth2 - 30;
+        const boxY2 = targetCanvas.height - boxHeight2 - 30;
+
+        targetCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        targetCtx.fillRect(boxX2, boxY2, boxWidth2, boxHeight2);
+
+        targetCtx.fillStyle = '#FFFFFF';
+        targetCtx.fillText(line3, boxX2 + paddingX, boxY2 + paddingY);
+
+        targetCtx.restore();
+    }
+
+    function getFormattedDateTimeVideo(date = new Date()) {
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+
+        let hours = date.getHours();
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12; hours = hours ? hours : 12;
+        const strHours = String(hours).padStart(2, '0');
+        fileDateString = `${date.getDate()} ${month} ${year}`;
+        return `${day}-${month}-${year} ${strHours}:${minutes} ${ampm}`;
+    }
+
+    function startScanningVideo() {
+        mainContainerVideo.classList.remove('is-recording');
+        video.style.display = 'block';
+        scannerMaskVideo.style.display = 'flex';
+        document.getElementById('infoScanning').style.display = 'block';
+        document.getElementById('infoRecording').style.display = 'none';
+        roiCache = null;
+        startScanLoop();
+    }
+
+    function stopScanLoop() {
+        scanActive = false;
+        scanToken++;
+    }
+
+    function startScanLoop() {
+        stopScanLoop();
+        scanActive = true;
+        const token = ++scanToken;
+        lastRead = { text: '', count: 0, t: 0 };
+        let lastEnd = 0;
+
+        const scheduleNext = () => {
+            let fired = false;
+            const run = () => { if (fired) return; fired = true; tick(); };
+            if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(run);
+            setTimeout(run, 120); // cadangan kalau rVFC tidak jalan (tab/jendela tersembunyi)
+        };
+
+        const tick = async () => {
+            if (!scanActive || token !== scanToken) return;
+            const ready = zxReady && !isRecording && !isDuplicateAlertActive && video.readyState >= 2 && !video.paused;
+            if (ready && performance.now() - lastEnd >= SCAN_CFG.minIntervalMs) {
+                try { await decodeAndHandle(token); } catch (e) { console.warn('decode error', e); }
+                lastEnd = performance.now();
+            }
+            scheduleNext();
+        };
+        scheduleNext();
+    }
+
+    function getScanROI() {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return null;
+        const now = performance.now();
+        if (roiCache && roiCache.vw === vw && roiCache.vh === vh && now - roiCacheT < 1000) return roiCache;
+
+        let x = vw * 0.125, y = vh * 0.25, w = vw * 0.75, h = vh * 0.5; // cadangan: tengah 75% x 50%
+        const winEl = scannerMaskVideo.querySelector('.scanner-window');
+        const vr = video.getBoundingClientRect();
+        const wr = winEl ? winEl.getBoundingClientRect() : null;
+        if (wr && wr.width > 0 && wr.height > 0 && vr.width > 0 && vr.height > 0) {
+            // petakan kotak scan di layar ke koordinat piksel video (object-fit: cover)
+            const scale = Math.max(vr.width / vw, vr.height / vh);
+            const offX = (vr.width - vw * scale) / 2;
+            const offY = (vr.height - vh * scale) / 2;
+            x = (wr.left - vr.left - offX) / scale;
+            y = (wr.top - vr.top - offY) / scale;
+            w = wr.width / scale;
+            h = wr.height / scale;
+        }
+        const px = w * SCAN_CFG.roiPadding, py = h * SCAN_CFG.roiPadding;
+        x -= px; y -= py; w += px * 2; h += py * 2;
+        x = Math.max(0, Math.floor(x)); y = Math.max(0, Math.floor(y));
+        w = Math.min(vw - x, Math.ceil(w)); h = Math.min(vh - y, Math.ceil(h));
+        if (w < 64 || h < 64) { x = 0; y = 0; w = vw; h = vh; }
+        roiCache = { x, y, w, h, vw, vh };
+        roiCacheT = now;
+        return roiCache;
+    }
+
+    function pickResult(results) {
+        const ok = results.filter(r => r.isValid !== false && r.text && r.text.trim().length >= SCAN_CFG.minLength);
+        if (!ok.length) return null;
+        const pref = ok.find(r => String(r.format).toLowerCase() === SCAN_CFG.preferFormat);
+        return (pref || ok[0]).text.trim();
+    }
+
+    async function decodeAndHandle(token) {
+        scanAttempt++;
+        const vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return;
+        const full = scanAttempt % SCAN_CFG.fullFrameEvery === 0;
+        const roi = full ? { x: 0, y: 0, w: vw, h: vh } : getScanROI();
+        if (!roi) return;
+
+        let dw = roi.w, dh = roi.h;
+        if (dw > SCAN_CFG.maxDecodeWidth) {
+            const r = SCAN_CFG.maxDecodeWidth / dw;
+            dw = Math.round(dw * r); dh = Math.round(dh * r);
+        }
+        if (scanCanvas.width !== dw || scanCanvas.height !== dh) { scanCanvas.width = dw; scanCanvas.height = dh; }
+        scanCtx.drawImage(video, roi.x, roi.y, roi.w, roi.h, 0, 0, dw, dh);
+        const img = scanCtx.getImageData(0, 0, dw, dh);
+
+        const t0 = performance.now();
+        let results = await ZXingWASM.readBarcodes(img, OPTS_FAST);   // cepat dulu
+        if (!results.length) results = await ZXingWASM.readBarcodes(img, OPTS_HARD); // lalu teliti
+        hud.ms += performance.now() - t0; hud.decodes++; hud.roiW = dw; hud.roiH = dh;
+
+        if (token !== scanToken || isRecording || isDuplicateAlertActive) return;
+        const text = pickResult(results);
+        if (!text) return;
+
+        const now = performance.now();
+        if (text === lastRead.text && now - lastRead.t <= SCAN_CFG.confirmWindowMs) lastRead.count++;
+        else lastRead.count = 1;
+        lastRead.text = text; lastRead.t = now;
+        if (lastRead.count < SCAN_CFG.confirmCount) return;
+        lastRead = { text: '', count: 0, t: 0 };
+
+        if (isDuplicateVideo(text)) {
+            handleDuplicateBarcodeVideo(text);
+        } else {
+            clearHighlightsVideo();
+            beep();
+            triggerRecordingVideo(text);
+        }
+    }
+
+    function triggerRecordingVideo(barcodeVal) {
+        if (isRecording) return;
+        
+        enqueueScan("video_packing", barcodeVal);
+        stopScanLoop();
+
+        isRecording = true;
+        scannerMaskVideo.style.display = 'none';
+        mainContainerVideo.classList.add('is-recording');
+
+        document.getElementById('infoScanning').style.display = 'none';
+        document.getElementById('infoRecording').style.display = 'block';
+
+        detectedBarcodeText = barcodeVal;
+        formattedDateTime = getFormattedDateTimeVideo();
+
+        addOrUpdateLocalVideoRecord(detectedBarcodeText);
+
+        recordingSeconds = 0;
+        if (recordingTimer) clearInterval(recordingTimer);
+        recordingTimer = setInterval(() => { recordingSeconds++; }, 1000);
+
+        statusBadgeVideo.innerText = `Status: MEREKAM (Resi: ${detectedBarcodeText})`;
+        statusBadgeVideo.className = "status-badge status-recording";
+        btnManualStop.style.display = 'inline-block';
+        btnSwitchCam.style.display = 'none';
+        btnFlash.style.display = 'none';
+
+        if (document.activeElement) document.activeElement.blur();
+
+        recordCtx.drawImage(video, 0, 0, recordCanvas.width, recordCanvas.height);
+        lastDrawnVT = -1;
+        const canvasStream = recordCanvas.captureStream(SCAN_CFG.camFps);
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length > 0) canvasStream.addTrack(audioTracks[0]);
+
+        recordedChunks = [];
+        let options = { mimeType: 'video/mp4' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm; codecs=vp9' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: '' };
+        options.videoBitsPerSecond = SCAN_CFG.recBitrate;
+
+        try {
+            mediaRecorder = new MediaRecorder(canvasStream, options);
+        } catch (e) {
+            mediaRecorder = new MediaRecorder(canvasStream);
+        }
+
+        mediaRecorder.ondataavailable = function(event) {
+            if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = function() {
+            if (recordingTimer) clearInterval(recordingTimer);
+            const finalType = mediaRecorder.mimeType && mediaRecorder.mimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
+            const blob = new Blob(recordedChunks, { type: finalType });
+            const videoUrl = URL.createObjectURL(blob);
+            const ext = finalType.includes('mp4') ? 'mp4' : 'webm';
+            
+            const cleanBarcode = detectedBarcodeText.replace(/[\/\\?%*:|"<>]/g, '_');
+            const customFileName = `${cleanBarcode} - ${fileDateString}.${ext}`;
+
+            downloadLinkVideo.href = videoUrl;
+            downloadLinkVideo.download = customFileName;
+            downloadLinkVideo.click();
+
+            showModalVideo(customFileName);
+
+            statusBadgeVideo.innerText = "Status: Menunggu Barcode Resi...";
+            statusBadgeVideo.className = "status-badge status-scanning";
+            btnManualStop.style.display = 'none';
+            
+            if (stream.getVideoTracks().length > 1) btnSwitchCam.style.display = 'inline-block';
+            if (trackCapabilities.torch) btnFlash.style.display = 'inline-block';
+
+            isRecording = false;
+            startScanningVideo();
+        };
+
+        mediaRecorder.start();
+    }
+
+    function stopRecordingVideo() {
+        if (!isRecording) return;
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+        }
+    }
+
+    function updateVideoTransform() {
+        const scaleX = isMirrorLR ? -1 : 1;
+        const scaleY = isMirrorUD ? -1 : 1;
+        video.style.transform = `scale(${scaleX}, ${scaleY})`;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (modalOverlayVideo.classList.contains('show')) {
+            if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                e.preventDefault();
+                modalOverlayVideo.classList.remove('show');
+            }
+            return;
+        }
+
+        if (duplicateModalOverlayVideo.classList.contains('show')) {
+            if (e.key === 'Escape' || e.code === 'Escape') {
+                e.preventDefault();
+                duplicateModalOverlayVideo.classList.remove('show');
+                pointingArrowVideo.style.display = 'none';
+                isDuplicateAlertActive = false;
+            }
+            return;
+        }
+
+        if (e.code === 'Space') {
+            if (isRecording) {
+                e.preventDefault();
+                stopRecordingVideo();
+            }
+            return;
+        }
+
+        if (isRecording) return;
+
+        if (!isDuplicateAlertActive) {
+            if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                if (scannerBuffer.trim().length > 3) {
+                    e.preventDefault();
+                    const scannedCode = scannerBuffer.trim();
+                    scannerBuffer = "";
+
+                    if (isDuplicateVideo(scannedCode)) {
+                        handleDuplicateBarcodeVideo(scannedCode);
+                    } else {
+                        clearHighlightsVideo();
+                        triggerRecordingVideo(scannedCode);
+                    }
+                    return;
+                }
+                scannerBuffer = "";
+            } else if (e.key.length === 1) {
+                scannerBuffer += e.key;
+                clearTimeout(scannerTimer);
+                scannerTimer = setTimeout(() => { scannerBuffer = ""; }, 100);
+            }
+        }
+    });
+
+    btnManualStop.addEventListener('click', stopRecordingVideo);
+    btnSwitchCam.addEventListener('click', () => { useFrontCamera = !useFrontCamera; initCameraVideo(); });
+    btnFlash.addEventListener('click', async () => {
+        if (!trackCapabilities.torch) return;
+        flashOn = !flashOn;
+        try {
+            const videoTrack = stream.getVideoTracks()[0];
+            await videoTrack.applyConstraints({ advanced: [{ torch: flashOn }] });
+            btnFlash.innerText = `Flash: ${flashOn ? 'ON' : 'OFF'}`;
+            btnFlash.classList.toggle('active', flashOn);
+        } catch (err) { console.error("Gagal menyalakan flash:", err); }
+    });
+
+    btnMirrorLR.addEventListener('click', () => {
+        isMirrorLR = !isMirrorLR;
+        btnMirrorLR.classList.toggle('active', isMirrorLR);
+        btnMirrorLR.innerText = `Mirror Kanan-Kiri: ${isMirrorLR ? 'ON' : 'OFF'}`;
+        updateVideoTransform();
+        btnMirrorLR.blur();
+    });
+
+    btnMirrorUD.addEventListener('click', () => {
+        isMirrorUD = !isMirrorUD;
+        btnMirrorUD.classList.toggle('active', isMirrorUD);
+        btnMirrorUD.innerText = `Mirror Atas-Bawah: ${isMirrorUD ? 'ON' : 'OFF'}`;
+        updateVideoTransform();
+        btnMirrorUD.blur();
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+        loadSavedSidebarWidth();
+        makeColumnsResizable();
+        loadColumnWidths();
+        loadMasterFromStorage();
+        offlineQueue = loadOfflineQueue();
+        saveOfflineQueue();
+        renderTodayListsFromMaster();
+        updateSyncStatus();
+        fullSync();
+        startVideoModule();
+    });
+</script>
+</body>
+</html>
