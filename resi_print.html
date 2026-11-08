@@ -119,6 +119,11 @@
         }
 
         /* Styling Counter Eye-Catching di Sebelah Nama Kolom */
+        .print-app-scope .sync-bar { display:flex; align-items:center; gap:8px; font-size:0.78rem; color:#94a3b8; margin:0 0 8px; flex:none; }
+        .print-app-scope .sync-dot { width:9px; height:9px; border-radius:50%; background:#888; flex:none; }
+        .print-app-scope .sync-dot.online { background:#4caf50; }
+        .print-app-scope .sync-dot.offline { background:#f44336; }
+        .print-app-scope .sync-dot.syncing { background:#ff9800; }
         .print-app-scope .col-counter {
             color: #ffd166;
             font-size: 1.1em;
@@ -305,6 +310,7 @@
                 <span class="panel-title">📋 Resi diprint (Hari Ini)</span>
             </div>
             <div class="panel-body">
+                <div class="sync-bar"><span id="syncDot" class="sync-dot"></span><span id="syncText">Memeriksa koneksi...</span></div>
                 <div class="table-wrapper">
                     <table class="scan-table" id="scanTableElementPrint">
                         <thead>
@@ -370,7 +376,24 @@
 
     let masterRecords = [];
     let todayListPrint = [];
-    let offlineQueue = JSON.parse(localStorage.getItem('resi_offline_queue') || '[]');
+    // Mode konfirmasi dari Apps Script:
+    //  "json"   = doPost mengembalikan {status:"SUCCESS"} (AMAN, disarankan, perlu app script baru)
+    //  "legacy" = app script lama tanpa konfirmasi (item dianggap terkirim bila request selesai tanpa error)
+    const ACK_MODE = "json";
+    const SYNC_INTERVAL_MS = 60000;   // sync berkala saat online
+    const POST_TIMEOUT_MS = 20000;
+
+    // Key storage khusus halaman print (sebelumnya memakai key polos yang sama dengan halaman lain,
+    // padahal bentuk data master & antreannya berbeda).
+    const QUEUE_KEY = 'resi_print_offline_queue';
+    const MASTER_KEY = 'resi_print_master_records';
+    const LEGACY_QUEUE_KEY = 'resi_offline_queue';
+    const PRINT_ACTION = 'print_resi';
+
+    let offlineQueue = [];   // dimuat di DOMContentLoaded
+    let isSyncing = false;
+    let needResync = false;
+    let lastSyncOk = null;
     let currentHighlightedRow = null;
     let zIndexCounter = 100;
 
@@ -685,116 +708,281 @@
 
     function parseDateString(timeStr) {
         if (!timeStr) return getTodayString();
+        // Apps Script menulis bulan bahasa Inggris ("7 November 2026 - 14:30"); bulan Indonesia tetap didukung
         const monthMap = {
-            "Januari": "01", "Februari": "02", "Maret": "03", "April": "04", "Mei": "05", "Juni": "06",
-            "Juli": "07", "Agustus": "08", "September": "09", "Oktober": "10", "November": "11", "Desember": "12"
+            januari: "01", january: "01", februari: "02", february: "02", maret: "03", march: "03",
+            april: "04", mei: "05", may: "05", juni: "06", june: "06", juli: "07", july: "07",
+            agustus: "08", august: "08", september: "09", oktober: "10", october: "10",
+            november: "11", desember: "12", december: "12"
         };
-        const parts = timeStr.trim().split(" ");
+        const parts = String(timeStr).trim().split(/\s+/);
         if (parts.length >= 3) {
             const day = String(parts[0]).padStart(2, '0');
-            const monthStr = parts[1];
+            const m = monthMap[String(parts[1]).toLowerCase()];
             const year = parts[2];
-            if (monthMap[monthStr]) {
-                return `${year}-${monthMap[monthStr]}-${day}`;
-            }
+            if (m && /^\d{4}$/.test(year)) return `${year}-${m}-${day}`;
         }
         return getTodayString();
     }
 
+    function getFormattedDateTimePrint(date = new Date()) {
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+        const day = String(date.getDate()).padStart(2, '0');
+        let hours = date.getHours();
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12; hours = hours ? hours : 12;
+        const strHours = String(hours).padStart(2, '0');
+        return `${day}-${months[date.getMonth()]}-${date.getFullYear()} ${strHours}:${minutes} ${ampm}`;
+    }
+
     function saveMasterToStorage() {
-        localStorage.setItem('resi_master_records', JSON.stringify(masterRecords));
+        localStorage.setItem(MASTER_KEY, JSON.stringify(masterRecords));
     }
 
     function loadMasterFromStorage() {
-        const local = localStorage.getItem('resi_master_records');
+        const local = localStorage.getItem(MASTER_KEY);
         if (local) {
             try { masterRecords = JSON.parse(local); } catch(e) { masterRecords = []; }
         }
     }
 
-    function saveOfflineQueue() {
-        localStorage.setItem('resi_offline_queue', JSON.stringify(offlineQueue));
-    }
+    // ================= QUEUE OFFLINE =================
+    // Multi-tab: antrean & lock sync dibagi lewat localStorage supaya dua tab tidak saling timpa / kirim ganda.
+    const TAB_ID = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    const SYNC_LOCK_KEY = 'resi_print_sync_lock';
+    const SYNC_LOCK_TTL_MS = 45000;
 
-    function sendPayloadToSheets(action, resiCode) {
-        const payloadObj = { action: action, resi: resiCode };
-        const payloadStr = JSON.stringify(payloadObj);
-
-        if (!navigator.onLine) {
-            offlineQueue.push(payloadObj);
-            saveOfflineQueue();
-            return;
-        }
-
-        if (navigator.sendBeacon) {
-            const blob = new Blob([payloadStr], { type: 'text/plain' });
-            const success = navigator.sendBeacon(WEB_APP_URL, blob);
-            if (!success) {
-                offlineQueue.push(payloadObj);
-                saveOfflineQueue();
+    function acquireSyncLock() {
+        try {
+            const raw = localStorage.getItem(SYNC_LOCK_KEY);
+            if (raw) {
+                const l = JSON.parse(raw);
+                if (l && l.tab !== TAB_ID && Date.now() - l.t < SYNC_LOCK_TTL_MS) return false;
             }
-        } else {
-            fetch(WEB_APP_URL, {
-                method: "POST", mode: "no-cors",
-                headers: { "Content-Type": "text/plain" }, body: payloadStr
-            }).catch(() => {
-                offlineQueue.push(payloadObj);
-                saveOfflineQueue();
-            });
-        }
+            localStorage.setItem(SYNC_LOCK_KEY, JSON.stringify({ tab: TAB_ID, t: Date.now() }));
+            const chk = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY));
+            return !!chk && chk.tab === TAB_ID;
+        } catch (e) { return true; }   // storage bermasalah: jangan blokir sync
     }
 
-    window.addEventListener('online', syncOfflineQueue);
-    function syncOfflineQueue() {
-        if (offlineQueue.length === 0) return;
-        const queueToProcess = [...offlineQueue];
-        offlineQueue = [];
-        saveOfflineQueue();
+    function releaseSyncLock() {
+        try {
+            const l = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY) || 'null');
+            if (l && l.tab === TAB_ID) localStorage.removeItem(SYNC_LOCK_KEY);
+        } catch (e) {}
+    }
 
-        queueToProcess.forEach(item => {
-            sendPayloadToSheets(item.action, item.resi);
+    function makeId() {
+        return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    }
+
+    // Pindahkan item print yang masih tersisa di key lama (key polos) ke key khusus print. Item lain dibiarkan.
+    function migrateLegacyQueue() {
+        try {
+            const old = JSON.parse(localStorage.getItem(LEGACY_QUEUE_KEY) || '[]');
+            if (!Array.isArray(old) || old.length === 0) return;
+            const mine = old.filter(it => it && it.action === PRINT_ACTION && it.resi);
+            if (mine.length === 0) return;
+            const cur = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+            const merged = (Array.isArray(cur) ? cur : []).concat(mine);
+            localStorage.setItem(QUEUE_KEY, JSON.stringify(merged));
+            const rest = old.filter(it => !(it && it.action === PRINT_ACTION && it.resi));
+            if (rest.length) localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(rest));
+            else localStorage.removeItem(LEGACY_QUEUE_KEY);
+        } catch (e) {}
+    }
+
+    function loadOfflineQueue() {
+        let arr = [];
+        try { arr = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch (e) { arr = []; }
+        if (!Array.isArray(arr)) arr = [];
+        // migrasi item lama (tanpa id / waktu)
+        return arr.filter(it => it && it.resi).map(it => {
+            if (!it.id) it.id = makeId();
+            if (!it.ts) it.ts = new Date().toISOString();
+            if (!it.time) it.time = getFormattedDateTimePrint(new Date(it.ts));
+            if (!it.date) it.date = getTodayString();
+            return it;
         });
     }
 
-    async function syncDataFromGSheet() {
-        if (!navigator.onLine) {
-            renderTodayListsFromMaster();
-            return;
-        }
+    function saveOfflineQueue() {
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(offlineQueue));
+        updateSyncStatus();
+    }
 
+    // Semua scan WAJIB lewat sini: masuk antrean + tersimpan di localStorage dulu.
+    function enqueueScan(action, resiCode) {
+        const now = new Date();
+        const item = {
+            id: makeId(),
+            action: action,
+            resi: resiCode,
+            ts: now.toISOString(),                 // waktu scan asli
+            time: getFormattedDateTimePrint(now),  // format tampil, sama dgn kolom sheet
+            date: getTodayString()
+        };
+        offlineQueue = loadOfflineQueue();     // baca ulang: tab lain mungkin sudah menambah/mengirim item
+        offlineQueue.push(item);
+        saveOfflineQueue();
+        setTimeout(requestSync, 500);
+        return item;
+    }
+
+    // ================= KIRIM KE SHEET =================
+    async function postItem(item) {
+        const body = JSON.stringify(item);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS);
         try {
-            const response = await fetch(WEB_APP_URL);
-            const json = await response.json();
-
-            if (json.status === "SUCCESS" && Array.isArray(json.data)) {
-                masterRecords = [];
-                json.data.forEach(item => {
-                    const resiA = item.colA ? item.colA.trim() : "";
-                    const resiB = item.colB ? item.colB.trim() : "";
-                    const resiC = item.colC ? item.colC.trim() : "";
-
-                    const dateA = parseDateString(item.timeA);
-                    const dateB = parseDateString(item.timeB);
-                    const dateC = parseDateString(item.timeC);
-
-                    if (resiA !== "") masterRecords.push({ code: resiA, date: dateA, appType: 'print' });
-                    if (resiB !== "") {
-                        let actualCodeB = resiB === "Sudah" ? resiA : resiB;
-                        if (actualCodeB !== "") masterRecords.push({ code: actualCodeB, date: dateB, appType: 'video' });
-                    }
-                    if (resiC !== "") {
-                        let actualCodeC = resiC === "Sudah" ? resiA : resiC;
-                        if (actualCodeC !== "") masterRecords.push({ code: actualCodeC, date: dateC, appType: 'pickup' });
-                    }
+            if (ACK_MODE === "legacy") {
+                await fetch(WEB_APP_URL, {
+                    method: "POST", mode: "no-cors",
+                    headers: { "Content-Type": "text/plain" }, body: body, signal: ctrl.signal
                 });
+                return true;
+            }
+            const res = await fetch(WEB_APP_URL, {
+                method: "POST",
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
+                body: body, signal: ctrl.signal
+            });
+            const j = await res.json();
+            if (j && j.status === "REJECTED") console.warn("Item ditolak sheet, dibuang dari antrean:", item, j.message);
+            return !!(j && (j.status === "SUCCESS" || j.status === "REJECTED"));
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // Kirim satu per satu, urut waktu scan. Hapus dari antrean HANYA setelah terkonfirmasi.
+    async function flushQueue() {
+        while (offlineQueue.length > 0 && navigator.onLine) {
+            const item = offlineQueue[0];
+            let ok = false;
+            try { ok = await postItem(item); } catch (e) { ok = false; }
+            if (!ok) return false;               // berhenti, item tetap di antrean, coba lagi nanti
+            offlineQueue = loadOfflineQueue().filter(q => q.id !== item.id);
+            saveOfflineQueue();
+            acquireSyncLock();               // perpanjang lock selama antrean masih diproses
+        }
+        return offlineQueue.length === 0;
+    }
+
+    // ================= DATA SHEET =================
+    // Halaman print menyimpan master sebagai daftar datar {code, date, appType}
+    // (print / video / pickup), jadi baris sheet dipecah per kolom.
+    function buildRecordsFromSheet(rows) {
+        const out = [];
+        rows.forEach(item => {
+            const resiA = item.colA ? String(item.colA).trim() : "";
+            const resiB = item.colB ? String(item.colB).trim() : "";
+            const resiC = item.colC ? String(item.colC).trim() : "";
+
+            if (resiA !== "") out.push({ code: resiA, date: parseDateString(item.timeA), appType: 'print' });
+            if (resiB !== "") {
+                const codeB = resiB === "Sudah" ? resiA : resiB;
+                if (codeB !== "") out.push({ code: codeB, date: parseDateString(item.timeB), appType: 'video' });
+            }
+            if (resiC !== "") {
+                const codeC = resiC === "Sudah" ? resiA : resiC;
+                if (codeC !== "") out.push({ code: codeC, date: parseDateString(item.timeC), appType: 'pickup' });
+            }
+        });
+        return out;
+    }
+
+    async function fetchSheet() {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS);
+        try {
+            const res = await fetch(WEB_APP_URL, { signal: ctrl.signal });
+            return await res.json();
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // Terapkan satu scan ke sekumpulan record (idempotent: aman dipanggil berulang).
+    function applyScanToRecords(records, scannedVal, dateStr, timeStr) {
+        const cleanScanned = cleanCode(scannedVal);
+        if (records.some(r => r.appType === 'print' && cleanCode(r.code) === cleanScanned)) return;
+        records.push({ code: scannedVal, date: dateStr, appType: 'print' });
+    }
+
+    // ================= ALUR SYNC (SATU PINTU) =================
+    // 1) kirim antrean  2) ambil sheet  3) replay sisa antrean  4) baru timpa data lokal
+    async function fullSync() {
+        if (isSyncing) { needResync = true; return; }
+        if (!navigator.onLine) { updateSyncStatus(); return; }
+        if (!acquireSyncLock()) { updateSyncStatus(); return; }   // tab lain sedang sync
+        isSyncing = true;
+        updateSyncStatus();
+        try {
+            offlineQueue = loadOfflineQueue();
+            await flushQueue();
+
+            const json = await fetchSheet();
+            if (json && json.status === "SUCCESS" && Array.isArray(json.data)) {
+                const fresh = buildRecordsFromSheet(json.data);
+                // replay scan yang belum terkirim supaya tidak hilang dari tampilan
+                offlineQueue.forEach(it => applyScanToRecords(fresh, it.resi, it.date, it.time));
+                // dari sini sampai assign: sinkron (tidak ada scan yang bisa menyela)
+                masterRecords = fresh;
                 saveMasterToStorage();
+                lastSyncOk = new Date();
             }
         } catch (err) {
-            console.warn("Gagal terhubung ke GSheet, menggunakan data local cache.", err);
+            console.warn("Sync gagal, tetap memakai data lokal.", err);
+        } finally {
+            releaseSyncLock();
+            isSyncing = false;
+            renderTodayListsFromMaster();
+            updateSyncStatus();
+            if (needResync) { needResync = false; setTimeout(fullSync, 300); }
         }
-
-        renderTodayListsFromMaster();
     }
+
+    function requestSync() { fullSync(); }
+
+    function updateSyncStatus() {
+        const dot = document.getElementById('syncDot');
+        const txt = document.getElementById('syncText');
+        if (!dot || !txt) return;
+        const pending = offlineQueue.length;
+        const pendTxt = pending > 0 ? ` | ${pending} belum terlapor` : "";
+        if (!navigator.onLine) {
+            dot.className = 'sync-dot offline';
+            txt.textContent = 'Offline - data disimpan di perangkat' + pendTxt;
+        } else if (isSyncing) {
+            dot.className = 'sync-dot syncing';
+            txt.textContent = 'Menyinkronkan...' + pendTxt;
+        } else {
+            dot.className = 'sync-dot online';
+            txt.textContent = (pending > 0 ? 'Online - menunggu kirim' : 'Online - semua terlapor') + pendTxt;
+        }
+    }
+
+    // Perubahan dari tab lain: ikuti antrean & data master terbaru.
+    window.addEventListener('storage', (e) => {
+        if (e.key === QUEUE_KEY) {
+            offlineQueue = loadOfflineQueue();
+            updateSyncStatus();
+        } else if (e.key === MASTER_KEY) {
+            loadMasterFromStorage();
+            renderTodayListsFromMaster();
+        }
+    });
+
+    window.addEventListener('online', requestSync);
+    window.addEventListener('offline', updateSyncStatus);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) requestSync(); });
+    setInterval(() => { if (navigator.onLine) requestSync(); }, SYNC_INTERVAL_MS);
+
+    window.addEventListener('beforeunload', (e) => {
+        if (offlineQueue.length > 0) { e.preventDefault(); e.returnValue = ''; }
+    });
 
     function renderTodayListsFromMaster() {
         const todayStr = getTodayString();
@@ -927,14 +1115,11 @@
                 const existingRow = findRowElementByResi(resiVal);
                 showDuplicateAlertPrint(resiVal, existingRow);
             } else {
-                const todayStr = getTodayString();
-                masterRecords.push({ code: resiVal, date: todayStr, appType: 'print' });
+                applyScanToRecords(masterRecords, resiVal, getTodayString(), getFormattedDateTimePrint());
                 saveMasterToStorage();
+                renderTodayListsFromMaster();
 
-                todayListPrint.push(resiVal);
-                addResiToTableDOM(tableBodyPrint, emptyStatePrint, scanCounterPrint, todayListPrint.length, resiVal, '#print-view .table-wrapper');
-
-                sendPayloadToSheets("print_resi", resiVal);
+                enqueueScan(PRINT_ACTION, resiVal);
 
                 statusMessagePrint.className = "scan-status success";
                 statusMessagePrint.innerText = `BERHASIL: ${resiVal}`;
@@ -948,9 +1133,12 @@
         makeColumnsResizable();
         loadColumnWidths();
         loadMasterFromStorage();
+        migrateLegacyQueue();
+        offlineQueue = loadOfflineQueue();
+        saveOfflineQueue();
         renderTodayListsFromMaster();
-        syncDataFromGSheet();
-        syncOfflineQueue();
+        updateSyncStatus();
+        fullSync();
         setTimeout(keepFocusPrint, 100);
     });
 </script>

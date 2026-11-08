@@ -474,6 +474,31 @@
     }
 
     // ================= QUEUE OFFLINE =================
+    // Multi-tab: antrean & lock sync dibagi lewat localStorage supaya dua tab tidak saling timpa / kirim ganda.
+    const TAB_ID = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    const SYNC_LOCK_KEY = 'resi_sync_lock';
+    const SYNC_LOCK_TTL_MS = 45000;
+
+    function acquireSyncLock() {
+        try {
+            const raw = localStorage.getItem(SYNC_LOCK_KEY);
+            if (raw) {
+                const l = JSON.parse(raw);
+                if (l && l.tab !== TAB_ID && Date.now() - l.t < SYNC_LOCK_TTL_MS) return false;
+            }
+            localStorage.setItem(SYNC_LOCK_KEY, JSON.stringify({ tab: TAB_ID, t: Date.now() }));
+            const chk = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY));
+            return !!chk && chk.tab === TAB_ID;
+        } catch (e) { return true; }   // storage bermasalah: jangan blokir sync
+    }
+
+    function releaseSyncLock() {
+        try {
+            const l = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY) || 'null');
+            if (l && l.tab === TAB_ID) localStorage.removeItem(SYNC_LOCK_KEY);
+        } catch (e) {}
+    }
+
     function makeId() {
         return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     }
@@ -508,6 +533,7 @@
             time: getFormattedDateTimeVideo(now),  // format tampil, sama dgn kolom sheet
             date: getTodayString()
         };
+        offlineQueue = loadOfflineQueue();     // baca ulang: tab lain mungkin sudah menambah/mengirim item
         offlineQueue.push(item);
         saveOfflineQueue();
         setTimeout(requestSync, 500);
@@ -547,8 +573,9 @@
             let ok = false;
             try { ok = await postItem(item); } catch (e) { ok = false; }
             if (!ok) return false;               // berhenti, item tetap di antrean, coba lagi nanti
-            offlineQueue = offlineQueue.filter(q => q.id !== item.id);
+            offlineQueue = loadOfflineQueue().filter(q => q.id !== item.id);
             saveOfflineQueue();
+            acquireSyncLock();               // perpanjang lock selama antrean masih diproses
         }
         return offlineQueue.length === 0;
     }
@@ -615,13 +642,15 @@
     async function fullSync() {
         if (isSyncing) { needResync = true; return; }
         if (!navigator.onLine) { updateSyncStatus(); return; }
+        if (!acquireSyncLock()) { updateSyncStatus(); return; }   // tab lain sedang sync
         isSyncing = true;
         updateSyncStatus();
         try {
+            offlineQueue = loadOfflineQueue();
             await flushQueue();
 
             const json = await fetchSheet();
-            if (json && json.status === "SUCCESS" && Array.isArray(json.data) && json.data.length > 0) {
+            if (json && json.status === "SUCCESS" && Array.isArray(json.data)) {
                 const fresh = buildRecordsFromSheet(json.data);
                 // replay scan yang belum terkirim supaya tidak hilang dari tampilan
                 offlineQueue.forEach(it => applyScanToRecords(fresh, it.resi, it.date, it.time));
@@ -633,6 +662,7 @@
         } catch (err) {
             console.warn("Sync gagal, tetap memakai data lokal.", err);
         } finally {
+            releaseSyncLock();
             isSyncing = false;
             renderTodayListsFromMaster();
             updateSyncStatus();
@@ -659,6 +689,17 @@
             txt.textContent = (pending > 0 ? 'Online - menunggu kirim' : 'Online - semua terlapor') + pendTxt;
         }
     }
+
+    // Perubahan dari tab lain: ikuti antrean & data master terbaru.
+    window.addEventListener('storage', (e) => {
+        if (e.key === 'resi_offline_queue') {
+            offlineQueue = loadOfflineQueue();
+            updateSyncStatus();
+        } else if (e.key === 'resi_master_records') {
+            loadMasterFromStorage();
+            renderTodayListsFromMaster();
+        }
+    });
 
     window.addEventListener('online', requestSync);
     window.addEventListener('offline', updateSyncStatus);
@@ -1243,8 +1284,11 @@
     function triggerRecordingVideo(barcodeVal) {
         if (isRecording) return;
         
-        enqueueScan("video_packing", barcodeVal);
         stopScanLoop();
+        // Scan baru masuk antrean (-> sheet) setelah MediaRecorder benar-benar mulai (lihat onstart).
+        const prevMasterJson = JSON.stringify(masterRecords);
+        const prevMatchResi = currentMatchResiVideo;
+        let scanQueued = false;
 
         isRecording = true;
         scannerMaskVideo.style.display = 'none';
@@ -1270,6 +1314,7 @@
 
         if (document.activeElement) document.activeElement.blur();
 
+        try {
         recordCtx.drawImage(video, 0, 0, recordCanvas.width, recordCanvas.height);
         lastDrawnVT = -1;
         const canvasStream = recordCanvas.captureStream(SCAN_CFG.camFps);
@@ -1291,6 +1336,16 @@
 
         mediaRecorder.ondataavailable = function(event) {
             if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+        };
+
+        mediaRecorder.onstart = function() {
+            if (scanQueued) return;
+            scanQueued = true;
+            enqueueScan("video_packing", barcodeVal);
+        };
+
+        mediaRecorder.onerror = function(ev) {
+            if (!scanQueued) abortRecordingStart(prevMasterJson, prevMatchResi, barcodeVal, ev && ev.error);
         };
 
         mediaRecorder.onstop = function() {
@@ -1321,6 +1376,37 @@
         };
 
         mediaRecorder.start();
+        } catch (err) {
+            if (!scanQueued) abortRecordingStart(prevMasterJson, prevMatchResi, barcodeVal, err);
+            else console.error("Error saat rekaman:", err);
+        }
+    }
+
+    // Rekaman gagal dimulai: batalkan catatan lokal, tidak ada yang dikirim ke sheet, kembali ke mode scan.
+    function abortRecordingStart(prevMasterJson, prevMatchResi, barcodeVal, err) {
+        console.error("Rekaman gagal dimulai, scan dibatalkan:", err);
+        if (recordingTimer) clearInterval(recordingTimer);
+        try {
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.onstop = null;
+                mediaRecorder.stop();
+            }
+        } catch (e) {}
+        try { masterRecords = JSON.parse(prevMasterJson); } catch (e) {}
+        try { saveMasterToStorage(); } catch (e) {}
+        currentMatchResiVideo = prevMatchResi;
+
+        isRecording = false;
+        statusBadgeVideo.innerText = "Status: Menunggu Barcode Resi...";
+        statusBadgeVideo.className = "status-badge status-scanning";
+        btnManualStop.style.display = 'none';
+        if (stream && stream.getVideoTracks().length > 1) btnSwitchCam.style.display = 'inline-block';
+        if (trackCapabilities && trackCapabilities.torch) btnFlash.style.display = 'inline-block';
+
+        renderTodayListsFromMaster();
+        modalMessageVideo.innerHTML = `Rekaman <b>gagal dimulai</b>.<br>Resi <b>${barcodeVal}</b> belum dicatat, silakan scan ulang.`;
+        modalOverlayVideo.classList.add('show');
+        startScanningVideo();
     }
 
     function stopRecordingVideo() {
